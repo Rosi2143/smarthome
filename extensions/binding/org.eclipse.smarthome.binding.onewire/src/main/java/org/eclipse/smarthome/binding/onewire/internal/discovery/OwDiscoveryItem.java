@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2014,2018 Contributors to the Eclipse Foundation
+ * Copyright (c) 2014,2019 Contributors to the Eclipse Foundation
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information regarding copyright ownership.
@@ -14,13 +14,17 @@ package org.eclipse.smarthome.binding.onewire.internal.discovery;
 
 import static org.eclipse.smarthome.binding.onewire.internal.OwBindingConstants.*;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.smarthome.binding.onewire.internal.DS2438Configuration;
 import org.eclipse.smarthome.binding.onewire.internal.OwException;
 import org.eclipse.smarthome.binding.onewire.internal.OwPageBuffer;
+import org.eclipse.smarthome.binding.onewire.internal.SensorId;
 import org.eclipse.smarthome.binding.onewire.internal.device.OwSensorType;
 import org.eclipse.smarthome.binding.onewire.internal.handler.OwBaseBridgeHandler;
 import org.eclipse.smarthome.core.thing.ThingTypeUID;
@@ -36,64 +40,57 @@ import org.slf4j.LoggerFactory;
 public class OwDiscoveryItem {
     private final Logger logger = LoggerFactory.getLogger(OwDiscoveryItem.class);
 
-    private final String familyId;
-    private final String sensorId;
+    private final SensorId sensorId;
     private OwSensorType sensorType = OwSensorType.UNKNOWN;
     private String vendor = "Dallas/Maxim";
-    private String hwRevision = "";
-    private String prodDate = "";
 
     private OwPageBuffer pages = new OwPageBuffer();
 
     private ThingTypeUID thingTypeUID = new ThingTypeUID(BINDING_ID, "");
 
-    private final List<String> associatedSensorIds = new ArrayList<>();
-    private final List<OwSensorType> associatedSensorTypes = new ArrayList<>();
-    private final List<OwDiscoveryItem> associatedSensors = new ArrayList<>();
+    private final Map<SensorId, OwSensorType> associatedSensors = new HashMap<>();
 
-    public OwDiscoveryItem(OwBaseBridgeHandler bridgeHandler, String sensorId) throws OwException {
+    public OwDiscoveryItem(OwBaseBridgeHandler bridgeHandler, SensorId sensorId) throws OwException {
         this.sensorId = sensorId;
-        familyId = sensorId.substring(0, 2);
         sensorType = bridgeHandler.getType(sensorId);
         switch (sensorType) {
             case DS2438:
                 pages = bridgeHandler.readPages(sensorId);
-                DS2438Configuration config = new DS2438Configuration(pages);
-                associatedSensorIds.addAll(config.getAssociatedSensorIds());
-                logger.trace("found associated sensors: {}", associatedSensorIds);
+                DS2438Configuration config = new DS2438Configuration(bridgeHandler, sensorId);
+                associatedSensors.putAll(config.getAssociatedSensors());
+                logger.trace("found associated sensors: {}", associatedSensors);
                 vendor = config.getVendor();
-                hwRevision = config.getHardwareRevision();
-                prodDate = config.getProductionDate();
                 sensorType = config.getSensorSubType();
+                break;
+            case EDS:
+                vendor = "Embedded Data Systems";
+                pages = bridgeHandler.readPages(sensorId);
+
+                try { // determine subsensorType
+                    sensorType = OwSensorType.valueOf(new String(pages.getPage(0), 0, 7, StandardCharsets.US_ASCII));
+                } catch (IllegalArgumentException e) {
+                    sensorType = OwSensorType.UNKNOWN;
+                }
                 break;
             default:
         }
     }
 
     /**
-     * get family ID of this sensor (first two characters in sensor id)
-     *
-     * @return the sensors family id
-     */
-    public String getFamilyId() {
-        return familyId;
-    }
-
-    /**
      * get sensor type
      *
-     * @return full sensor type
+     * @return sensor type
      */
     public OwSensorType getSensorType() {
         return sensorType;
     }
 
     /**
-     * get sensor id (familyId.xxxxxxxxxx)
+     * get this sensor id
      *
      * @return sensor id
      */
-    public String getSensorId() {
+    public SensorId getSensorId() {
         return sensorId;
     }
 
@@ -103,7 +100,7 @@ public class OwDiscoveryItem {
      * @return sensor id in format familyId_xxxxxxxxxx
      */
     public String getNormalizedSensorId() {
-        return sensorId.replace(".", "_");
+        return sensorId.getId().replace(".", "_");
     }
 
     /**
@@ -113,24 +110,6 @@ public class OwDiscoveryItem {
      */
     public String getVendor() {
         return vendor;
-    }
-
-    /**
-     * get production date (available on some multisensors)
-     *
-     * @return production date in format ww/yy
-     */
-    public String getProductionDate() {
-        return prodDate;
-    }
-
-    /**
-     * get hardware revision (available on some multisensors)
-     *
-     * @return hardware revision (where available)
-     */
-    public String getHardwareRevision() {
-        return hwRevision;
     }
 
     /**
@@ -148,93 +127,12 @@ public class OwDiscoveryItem {
     }
 
     /**
-     * check if associated sensors have been found
-     *
-     * @return true if this sensors pages include other sensor ids
-     */
-    public boolean hasAssociatedSensorIds() {
-        return !associatedSensorIds.isEmpty();
-    }
-
-    /**
      * get a list of all sensors associated to this sensor
      *
      * @return list of strings
      */
-    public List<String> getAssociatedSensorIds() {
-        return associatedSensorIds;
-    }
-
-    /**
-     * check if secondary sensors have been added
-     *
-     * @return true if sensors have been added
-     */
-    public boolean hasAssociatedSensors() {
-        return !associatedSensors.isEmpty();
-    }
-
-    /**
-     * add a sensor as secondary to this sensor
-     *
-     * @param associatedSensor
-     */
-    public void addAssociatedSensor(OwDiscoveryItem associatedSensor) {
-        associatedSensors.add(associatedSensor);
-        associatedSensorTypes.add(associatedSensor.getSensorType());
-    }
-
-    /**
-     * bulk add secondary sensors
-     *
-     * @param associatedSensors
-     */
-    public void addAssociatedSensors(List<OwDiscoveryItem> associatedSensors) {
-        for (OwDiscoveryItem associatedSensor : associatedSensors) {
-            addAssociatedSensor(associatedSensor);
-        }
-    }
-
-    /**
-     * get all secondary sensors
-     *
-     * @return a list of OwDiscoveryItems
-     */
-    public List<OwDiscoveryItem> getAssociatedSensors() {
-        return associatedSensors;
-    }
-
-    /**
-     * get all secondary sensors of a given type
-     *
-     * @param sensorType filter for sensors
-     * @return a list of OwDiscoveryItems
-     */
-    public List<OwDiscoveryItem> getAssociatedSensors(OwSensorType sensorType) {
-        List<OwDiscoveryItem> returnList = new ArrayList<>();
-        for (OwDiscoveryItem owDiscoveryItem : associatedSensors) {
-            if (sensorType == owDiscoveryItem.getSensorType()) {
-                returnList.add(owDiscoveryItem);
-            }
-        }
-        return returnList;
-    }
-
-    /**
-     * get the number of secondary sensors
-     *
-     * @return number of sensors
-     */
-    public int getAssociatedSensorCount() {
-        return associatedSensors.size() + 1;
-    }
-
-    /**
-     * clear all secondary sensors
-     *
-     */
-    public void clearAssociatedSensors() {
-        associatedSensors.clear();
+    public List<SensorId> getAssociatedSensorIds() {
+        return new ArrayList<>(associatedSensors.keySet());
     }
 
     /**
@@ -246,19 +144,20 @@ public class OwDiscoveryItem {
         switch (sensorType) {
             case MS_TH:
             case MS_TH_S:
-                sensorType = DS2438Configuration.getMultisensorType(sensorType, associatedSensorTypes);
+                sensorType = DS2438Configuration.getMultisensorType(sensorType,
+                        new ArrayList<>(associatedSensors.values()));
                 break;
             default:
         }
     }
 
     /**
-     * get Label "thingtype (id)"
+     * get Label "<thingtype> (<id>)"
      *
      * @return the thing label
      */
     public String getLabel() {
-        return THING_LABEL_MAP.get(thingTypeUID) + " (" + this.sensorId + ")";
+        return THING_LABEL_MAP.get(thingTypeUID) + " (" + this.sensorId.getId() + ")";
     }
 
     @Override

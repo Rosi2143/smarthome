@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2014,2018 Contributors to the Eclipse Foundation
+ * Copyright (c) 2014,2019 Contributors to the Eclipse Foundation
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information regarding copyright ownership.
@@ -913,7 +913,7 @@ public class ThingManagerOSGiJavaTest extends JavaOSGiTest {
     }
 
     @Test
-    public void testStorageEntryRemovedOnThingRemoval() throws Exception {
+    public void testStorageEntryRetainedOnThingRemoval() throws Exception {
         registerThingTypeProvider();
 
         AtomicReference<ThingHandlerCallback> thingHandlerCallback = new AtomicReference<>();
@@ -981,8 +981,10 @@ public class ThingManagerOSGiJavaTest extends JavaOSGiTest {
         new Thread((Runnable) () -> managedThingProvider.remove(THING.getUID())).start();
 
         waitForAssert(() -> {
-            assertThat(storage.containsKey(THING_UID.getAsString()), is(false));
+            assertThat(thingRegistry.get(THING.getUID()), is(equalTo(null)));
         }, SafeCaller.DEFAULT_TIMEOUT - 100, 50);
+
+        assertThat(storage.containsKey(THING_UID.getAsString()), is(true));
     }
 
     private void assertThingStatus(Map<String, Object> propsThing, Map<String, Object> propsChannel, ThingStatus status,
